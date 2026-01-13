@@ -90,26 +90,30 @@ def call_perplexity(system_prompt, user_prompt):
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("landing.html")
+
+@app.route("/landing")
+def landing():
+    return render_template("landing.html")
 
 @app.route("/api/stella/start", methods=["POST"])
 def start():
     session_id = manager.create_session()
     
-    msg = """Hola 👋 Soy **Stella**, tu guía inteligente de STUNET ✨
-
-Te ayudaré a encontrar el destino internacional perfecto para ti. Te haré algunas preguntas para conocer tus preferencias y así poder recomendarte las mejores opciones.
-
-¿Empezamos? 
-
-**Primera pregunta:** ¿Prefieres estudiar o vivir en una **ciudad grande y cosmopolita**, una **ciudad mediana**, una **ciudad pequeña y tranquila**, o **te adaptas a cualquier lugar**?"""
+    messages = [
+        "¡Hola! Soy **Stella**, tu guía de STUNET. 🌍",
+        "Te ayudaré a encontrar tu destino internacional ideal con unas breves preguntas.",
+        "**Primera pregunta:** ¿Prefieres estudiar o vivir en una **ciudad grande**, **mediana**, **pequeña**, o **te adaptas a cualquier lugar**?"
+    ]
     
-    manager.add_message(session_id, "assistant", msg)
+    for msg in messages:
+        manager.add_message(session_id, "assistant", msg)
+        
     manager.sessions[session_id]["question_count"] = 1
     
     return jsonify({
         "session_id": session_id,
-        "message": msg
+        "messages": messages
     })
 
 @app.route("/api/stella/message", methods=["POST"])
@@ -184,25 +188,32 @@ IMPORTANTE: Empieza con "VALID:"."""
     is_valid = raw_response.startswith("VALID:")
     assistant_msg = raw_response.replace("VALID:", "").replace("INVALID:", "").strip()
     
+    # Limpiar posibles citas tipo [1][2] que Perplexity a veces incluye por error
+    import re
+    assistant_msg = re.sub(r'\[\d+\]', '', assistant_msg)
+    
+    # Asegurar que no queden referencias residuales
+    assistant_msg = assistant_msg.replace("[1]", "").replace("[2]", "").replace("[3]", "").replace("[4]", "").replace("[5]", "")
+    
+    # Detectar si estamos en el cierre de recomendaciones o pidiendo datos
+    is_recommendation = any(kw in assistant_msg.lower() for kw in ["recomiendo", "estos son", "mejores opciones", "puedes estudiar"])
+    requesting_data = any(kw in assistant_msg.lower() for kw in ["compartes tus datos", "tus datos", "formulario", "tu correo"])
+    
     # Guardar respuesta limpia
     manager.add_message(sid, "assistant", assistant_msg)
     
     # Incrementar contador SOLO si es válido y no estamos en el final
     if is_valid and question_count < 5:
-        session["question_count"] += 1
+        manager.sessions[sid]["question_count"] += 1
     elif is_valid and question_count == 5:
-        session["question_count"] = 6 # Pasar a etapa de datos
-    
-    # Detectar si está pidiendo datos
-    requesting_lead = any(word in assistant_msg.lower() for word in [
-        "nombre", "email", "whatsapp", "datos", "compartir"
-    ])
+        manager.sessions[sid]["question_count"] = 6 # Pasar a etapa de datos
     
     return jsonify({
         "response": assistant_msg,
         "session_id": sid,
-        "question_number": session["question_count"],
-        "requesting_lead": requesting_lead,
+        "question_number": manager.sessions[sid]["question_count"],
+        "requesting_lead": requesting_data,
+        "is_recommendation": is_recommendation,
         "is_valid": is_valid
     })
 
